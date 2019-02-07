@@ -1,54 +1,38 @@
 import torch
 import numpy as np
-from model import Actor, Critic, Critic2
+from model import Actor, Critic
 from buffer import ReplayBuffer
 import torch.nn.functional as F
 
 device = ("cuda:0" if torch.cuda.is_available() else "cpu")
 
-# Hyper parameters
-BUFFER_SIZE = int(5e4)  # replay buffer size
-BATCH_SIZE = 256        # minibatch size
-GAMMA = 0.99            # discount factor
-TAU = 1e-3              # for soft update of target parameters
-LR_ACTOR = 1e-3        # learning rate of the actor 
-LR_CRITIC = 1e-3       # learning rate of the critic
-WEIGHT_DECAY = 1e-4     # L2 weight decay for the critic
-TRAIN_FREQ = 20
-UPDATE_COUNT = 20
-NOISE_SIGMA = 0.05
-TRUE_BATCH_SIZE = 128
-PRIORITY_SELECTION = False
-EPSILON = 0.5
 
 class DDPG():
-    def __init__(self, state_size, action_size, seed, critic_type, lr_a, lr_c, tau, gamma, w_decay):
+    def __init__(self, state_size, action_size, params):
         
-        torch.manual_seed(seed)
+        torch.manual_seed(params['SEED'])
 
-        self.actor = Actor(state_size, action_size, seed).to(device)
-        self.actor_target = Actor(state_size, action_size, seed).to(device)
-        self.actor_opti = torch.optim.Adam(self.actor.parameters(), lr=lr_a)
+        self.actor = Actor(state_size, action_size, params).to(device)
+        self.actor_target = Actor(state_size, action_size, params).to(device)
+        self.actor_opti = torch.optim.Adam(self.actor.parameters(), lr=params['LR_ACTOR'])
 
 
-        if critic_type==0:
-            self.critic = Critic(state_size, action_size, seed).to(device)
-            self.critic_target = Critic(state_size, action_size, seed).to(device)
-
-        elif critic_type==1:
-            self.critic = Critic2(state_size, action_size, seed).to(device)
-            self.critic_target = Critic2(state_size, action_size, seed).to(device)
-        self.critic_opti = torch.optim.Adam(self.critic.parameters(), lr=lr_c, weight_decay=w_decay)
+        self.critic = Critic(state_size, action_size, params).to(device)
+        self.critic_target = Critic(state_size, action_size, params).to(device)
+        self.critic_opti = torch.optim.Adam(self.critic.parameters(), lr=params['LR_CRITIC'], weight_decay=params['WEIGHT_DECAY'])
 
 
         self.hard_copy(self.actor, self.actor_target)
         self.hard_copy(self.critic, self.critic_target)
 
         
-        self.noise = OUNoise(action_size, seed)
-        self.gamma = gamma
-        self.tau = tau
-        self.epsilon = EPSILON
+        self.noise = OUNoise(action_size, params['SEED'], params['NOISE_SIGMA'])
+        self.gamma = params['GAMMA']
+        self.tau = params['TAU']
+        self.clipping = params['CLIPPING']
+
+        self.actor_loss_list = []
+        self.critic_loss_list = []
 
     def hard_copy(self, local, target):
 
@@ -124,9 +108,10 @@ class DDPG():
         critic_loss = F.mse_loss(q_value, target=y.to(device))#F.smooth_l1_loss(q_value, target=y)
         self.critic_opti.zero_grad() # Clear gradients
         critic_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.critic.parameters(), 1)
+        if self.clipping:
+            torch.nn.utils.clip_grad_norm_(self.critic.parameters(), 1)
         self.critic_opti.step() # perform single optimization step
-
+        self.critic_loss_list.append(critic_loss.cpu().data.numpy())
 
         # ---------Update local critic----------------#
         predicted_action = self.actor(states)
@@ -136,7 +121,7 @@ class DDPG():
         actor_loss.backward() 
         self.actor_opti.step()
         self.critic.train()
-
+        self.actor_loss_list.append(actor_loss.cpu().data.numpy())
         # ---------Update target networks----------------#
         self.soft_copy(self.actor, self.actor_target, self.tau)
         self.soft_copy(self.critic, self.critic_target, self.tau)
@@ -201,15 +186,22 @@ class DDPG():
 
 class MultiAgent():
 
-    def __init__(self, state_size, action_size, num_agents, seed, critic_type=0, lr_a=LR_ACTOR, lr_c=LR_CRITIC, tau=TAU, gamma=GAMMA, w_decay=WEIGHT_DECAY, buf_size=BUFFER_SIZE, batch_size=BATCH_SIZE):
+    def __init__(self, state_size, action_size, num_agents, params):
 
-        self.batch_size = batch_size
+        self.batch_size = params['BATCH_SIZE']
+        self.buf_size = params['BUFFER_SIZE']
+        self.seed = params['SEED']
+        self.train_freq = params['TRAIN_FREQ']
+        self.train_iter = params['TRAIN_ITER']
+        self.priority_selction = params['PRIORITY_SELECTION']
         self.num_agents = num_agents
         self.agents = []
-        for i in range(self.num_agents):
-            self.agents.append(DDPG(state_size, action_size, seed, critic_type, lr_a, lr_c, tau, gamma, w_decay))
+        for _ in range(self.num_agents):
+            self.agents.append(DDPG(state_size, action_size, params))
 
-        self.memory = ReplayBuffer(buf_size, batch_size, seed)
+        self.memory = ReplayBuffer(self.buf_size, self.batch_size, self.seed)
+        self.actor_loss_history = []
+        self.critic_loss_history = []
         self.step_count = 0
 
     def act(self, states):
@@ -228,13 +220,10 @@ class MultiAgent():
         return agents_actions
     
     def train_condition_check(self):
-        memory_check = False
-        train_check = False
-        if len(self.memory)>=self.batch_size:
-            memory_check = True
+        
+        memory_check = len(self.memory)>=self.batch_size
+        train_check = self.step_count % self.train_freq == 0
 
-        if self.step_count % TRAIN_FREQ == 0:
-           train_check = True
         # if both condition are True, then True
         return np.all([memory_check, train_check])
 
@@ -259,10 +248,10 @@ class MultiAgent():
         #if len(self.memory)>=self.batch_size:
         if self.train_condition_check():
             for agent in self.agents:
-                for i in range(UPDATE_COUNT):
+                for i in range(self.train_iter):
                     e = self.memory.sample()
                     # Use prioirty buffer method
-                    if PRIORITY_SELECTION:
+                    if self.priority_selction:
                         agent.priority_update(e)
                     else:
                         agent.update(e)
@@ -272,36 +261,45 @@ class MultiAgent():
         for agent in self.agents:
             agent.reset()
 
-    def save_model(self, path='data/model/'):
+    def get_loss_history(self):
+        for agent in self.agents:
+            actor_loss, critic_loss = agent.get_loss()
+            self.actor_loss_history.append(actor_loss)
+            self.critic_loss_history.append(critic_loss)
+            
+        self.actor_loss_history = np.mean(self.actor_loss_history, axis=0)
+        self.critic_loss_history = np.mean(self.critic_loss_history, axis=0)
+
+    def save_model(self, path='model/'):
         """
         Save model parameters.
 
         """
         for i in range(self.num_agents):
-            torch.save(self.agents[i].actor.state_dict(), path+'agent{}_actor.pth'.format(i))
-            torch.save(self.agents[i].critic.state_dict(), path+'agent{}_critic.pth'.format(i))
-            torch.save(self.agents[i].actor_target.state_dict(), path+'agent{}_actor_target.pth'.format(i))
-            torch.save(self.agents[i].critic_target.state_dict(), path+'agent{}_critic_target.pth'.format(i))
+            torch.save(self.agents[i].actor.state_dict(), path+'/agent{}_actor.pth'.format(i))
+            torch.save(self.agents[i].critic.state_dict(), path+'/agent{}_critic.pth'.format(i))
+            torch.save(self.agents[i].actor_target.state_dict(), path+'/agent{}_actor_target.pth'.format(i))
+            torch.save(self.agents[i].critic_target.state_dict(), path+'/agent{}_critic_target.pth'.format(i))
    
-    def load_model(self, path='data/model/'):
+    def load_model(self, path='model/'):
         """
         Load model parameters
         """
         if torch.cuda.is_available():
             for i in range(self.num_agents):
-                self.agents[i].actor.load_state_dict(torch.load(path+'agent{}_actor.pth'.format(i)))
-                self.agents[i].critic.load_state_dict(torch.load(path+'agent{}_critic.pth'.format(i)))
-                self.agents[i].actor_target.load_state_dict(torch.load(path+'agent{}_actor_target.pth'.format(i)))
-                self.agents[i].critic.load_state_dict(torch.load(path+'agent{}_critic_target.pth'.format(i)))
+                self.agents[i].actor.load_state_dict(torch.load(path+'/agent{}_actor.pth'.format(i)))
+                self.agents[i].critic.load_state_dict(torch.load(path+'/agent{}_critic.pth'.format(i)))
+                self.agents[i].actor_target.load_state_dict(torch.load(path+'/agent{}_actor_target.pth'.format(i)))
+                self.agents[i].critic.load_state_dict(torch.load(path+'/agent{}_critic_target.pth'.format(i)))
         else:
             for i in range(self.num_agents):
-                self.agents[i].actor.load_state_dict(torch.load(path+'agent{}_actor.pth'.format(i), map_location='cpu'))
-                self.agents[i].critic.load_state_dict(torch.load(path+'agent{}_critic.pth'.format(i), map_location='cpu'))
-                self.agents[i].actor_target.load_state_dict(torch.load(path+'agent{}_actor_target.pth'.format(i),map_location='cpu'))
-                self.agents[i].critic.load_state_dict(torch.load(path+'agent{}_critic_target.pth'.format(i), map_location='cpu'))
-            
+                self.agents[i].actor.load_state_dict(torch.load(path+'/agent{}_actor.pth'.format(i), map_location='cpu'))
+                self.agents[i].critic.load_state_dict(torch.load(path+'/agent{}_critic.pth'.format(i), map_location='cpu'))
+                self.agents[i].actor_target.load_state_dict(torch.load(path+'/agent{}_actor_target.pth'.format(i),map_location='cpu'))
+                self.agents[i].critic.load_state_dict(torch.load(path+'/agent{}_critic_target.pth'.format(i), map_location='cpu'))
+
 class OUNoise():
-    def __init__(self, action_size, seed, mu=.0, theta=0.15, sigma=NOISE_SIGMA):
+    def __init__(self, action_size, seed, sigma=0.05, mu=.0, theta=0.15):
         """
         Set initial random process state.
         

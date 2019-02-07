@@ -9,9 +9,13 @@ device = ("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
 class Actor(nn.Module):
-    def __init__(self, state_size, action_size, seed, fc1_units=96, fc2_units=96):
+    def __init__(self, state_size, action_size, params):
 
         super().__init__()
+        
+        seed = params['SEED']
+        fc1_units = params['FC1']
+        fc2_units = params['FC2']
 
         torch.manual_seed(seed)
         self.bn0 = nn.BatchNorm1d(state_size)
@@ -28,15 +32,6 @@ class Actor(nn.Module):
             if isinstance(m, nn.Linear):
                 I.xavier_normal_(m.weight)
 
-    def forward(self, state):
-        x = self.bn0(state)
-        x = F.relu(self.fc1(x))
-        x = self.bn1(x)
-        x = F.relu(self.fc2(x))
-        x = self.bn2(x)
-        x = self.fc3(x)
-        return F.tanh(x)
-
     def get_fan_in(self, layer):
         """
         Get the fan-in in each layer.
@@ -52,7 +47,66 @@ class Actor(nn.Module):
         I.uniform_(self.fc2.weight, *self.get_fan_in(self.fc2))
         I.uniform_(self.fc3.weight, -3*1e-3, 3e-3)
 
+    def forward(self, state):
+        x = self.bn0(state)
+        x = F.relu(self.fc1(x))
+        x = self.bn1(x)
+        x = F.relu(self.fc2(x))
+        x = self.bn2(x)
+        x = self.fc3(x)
+        return F.tanh(x)
+
+
 class Critic(nn.Module):
+
+    def __init__(self, state_size, action_size, params):
+        super().__init__()
+
+        seed = params['SEED']
+        fc1_units = params['FC1']
+        fc2_units = params['FC2']
+        
+        torch.manual_seed(seed)
+        
+        self.bn0 = nn.BatchNorm1d(state_size)
+        self.fc1 = nn.Linear(state_size, fc1_units,bias=False)
+
+        self.fc_merged = nn.Linear(fc1_units+action_size, fc2_units)
+        self.fc2 = nn.Linear(fc2_units, 1)
+
+        self.reset_parameters()
+
+    def reset_parameters_xavier(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                I.xavier_normal_(m.weight)
+
+    def get_fan_in(self, layer):
+        """
+        Get the fan-in in each layer.
+        """
+        fan_in = 1/np.sqrt(layer.in_features)
+        return (-fan_in, fan_in)
+
+    def reset_parameters(self):
+        """
+        Initialize weights and bais in each layer
+        """
+        I.uniform_(self.fc1.weight, *self.get_fan_in(self.fc1))
+        I.uniform_(self.fc_merged.weight, *self.get_fan_in(self.fc_merged))
+        I.uniform_(self.fc2.weight, -3*1e-3, 3e-3)   
+
+    def forward(self, state, action):
+
+        x = self.bn0(state)
+        x = F.relu(self.fc1(x))
+        x = torch.cat((x, action), dim=1)
+        x = F.relu(self.fc_merged(x))
+        x = self.fc2(x)
+      
+        return x
+
+class Critic2(nn.Module):
 
     def __init__(self, state_size, action_size, seed, fc1_units=128, fc2_units=64):
         super().__init__()
@@ -105,51 +159,6 @@ class Critic(nn.Module):
         net = F.relu(x+y)
         net = self.fc_merged(net)
         return net
-
-class Critic2(nn.Module):
-
-    def __init__(self, state_size, action_size, seed, fc1_units=96, fc2_units=96):
-        super().__init__()
-
-        torch.manual_seed(seed)
-        
-        self.bn0 = nn.BatchNorm1d(state_size)
-        self.fc1 = nn.Linear(state_size, fc1_units,bias=False)
-
-        self.fc_merged = nn.Linear(fc1_units+action_size, fc2_units)
-        self.fc2 = nn.Linear(fc2_units, 1)
-
-        self.reset_parameters()
-
-    def reset_parameters_xavier(self):
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                I.xavier_normal_(m.weight)
-
-    def get_fan_in(self, layer):
-        """
-        Get the fan-in in each layer.
-        """
-        fan_in = 1/np.sqrt(layer.in_features)
-        return (-fan_in, fan_in)
-
-    def reset_parameters(self):
-        """
-        Initialize weights and bais in each layer
-        """
-        I.uniform_(self.fc1.weight, *self.get_fan_in(self.fc1))
-        I.uniform_(self.fc_merged.weight, *self.get_fan_in(self.fc_merged))
-        I.uniform_(self.fc2.weight, -3*1e-3, 3e-3)   
-
-    def forward(self, state, action):
-
-        x = self.bn0(state)
-        x = F.relu(self.fc1(x))
-        x = torch.cat((x, action), dim=1)
-        x = F.relu(self.fc_merged(x))
-        x = self.fc2(x)
-      
-        return x
 
 
 
