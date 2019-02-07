@@ -1,0 +1,5 @@
+python/
+.zip
+data/multi_agent/
+data/single_agent/
+data/tmp/
