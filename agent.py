@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from model import Actor, Critic
+from model import Actor, Critic3, Critic4
 from buffer import ReplayBuffer
 import torch.nn.functional as F
 
@@ -17,8 +17,8 @@ class DDPG():
         self.actor_opti = torch.optim.Adam(self.actor.parameters(), lr=params['LR_ACTOR'])
 
 
-        self.critic = Critic(state_size, action_size, params).to(device)
-        self.critic_target = Critic(state_size, action_size, params).to(device)
+        self.critic = Critic4(state_size, action_size, params).to(device)
+        self.critic_target = Critic4(state_size, action_size, params).to(device)
         self.critic_opti = torch.optim.Adam(self.critic.parameters(), lr=params['LR_CRITIC'], weight_decay=params['WEIGHT_DECAY'])
 
 
@@ -26,11 +26,11 @@ class DDPG():
         self.hard_copy(self.critic, self.critic_target)
 
         
-        self.noise = OUNoise(action_size, params['SEED'], params['NOISE_SIGMA'])
+        self.noise = OUNoise(action_size, params)
         self.gamma = params['GAMMA']
         self.tau = params['TAU']
         self.clipping = params['CLIPPING']
-
+        self.batch_size = params['BATCH_SIZE']
         self.actor_loss_list = []
         self.critic_loss_list = []
 
@@ -165,7 +165,7 @@ class DDPG():
         priority = torch.abs(td_error)
         prob = priority/sum(priority)
         prob_numpy = prob.cpu().numpy()
-        index = np.random.choice(len(prob_numpy),TRUE_BATCH_SIZE, False, prob_numpy.reshape(-1))
+        index = np.random.choice(len(prob_numpy),self.batch_size//2, False, prob_numpy.reshape(-1))
 
         #hubber_loss = torch.nn.SmoothL1Loss()
         critic_loss = F.mse_loss(q_value[index], target=y[index])#F.smooth_l1_loss(q_value, target=y)
@@ -188,9 +188,9 @@ class MultiAgent():
 
     def __init__(self, state_size, action_size, num_agents, params):
 
+        torch.manual_seed(params['SEED'])
         self.batch_size = params['BATCH_SIZE']
         self.buf_size = params['BUFFER_SIZE']
-        self.seed = params['SEED']
         self.train_freq = params['TRAIN_FREQ']
         self.train_iter = params['TRAIN_ITER']
         self.priority_selction = params['PRIORITY_SELECTION']
@@ -199,7 +199,7 @@ class MultiAgent():
         for _ in range(self.num_agents):
             self.agents.append(DDPG(state_size, action_size, params))
 
-        self.memory = ReplayBuffer(self.buf_size, self.batch_size, self.seed)
+        self.memory = ReplayBuffer(self.buf_size, self.batch_size, params['SEED'])
         self.actor_loss_history = []
         self.critic_loss_history = []
         self.step_count = 0
@@ -299,7 +299,7 @@ class MultiAgent():
                 self.agents[i].critic.load_state_dict(torch.load(path+'/agent{}_critic_target.pth'.format(i), map_location='cpu'))
 
 class OUNoise():
-    def __init__(self, action_size, seed, sigma=0.05, mu=.0, theta=0.15):
+    def __init__(self, action_size, params, mu=.0):
         """
         Set initial random process state.
         
@@ -314,9 +314,11 @@ class OUNoise():
         """
         #self.noise_state = np.ones(action_size)*mu
         self.mu = np.ones(action_size)*mu # shape : [action_size,]
-        self.theta = theta
-        self.sigma = sigma
-        np.random.seed(seed)
+        self.theta = 0.15
+        self.sigma = params['NOISE_SIGMA']
+        np.random.seed(params['SEED'])
+        self.scale = 1.0
+        self.noise_decay = params['EXPLORATION_DECAY']
         self.reset()
     
     def reset(self):
@@ -324,7 +326,8 @@ class OUNoise():
         Reset the noise state to the mu.
         """
         self.noise_state = self.mu
-
+        self.scale = self.scale * self.noise_decay
+        
     def sample(self):
         """
         Returns
@@ -334,6 +337,6 @@ class OUNoise():
         x = self.noise_state
         dx = self.theta*(self.mu-x) + self.sigma*(np.random.randn(len(x)))
         self.noise_state = x+ dx
-        return (self.noise_state)
+        return (self.noise_state)*self.scale
 
     
