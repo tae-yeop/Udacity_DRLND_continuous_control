@@ -263,9 +263,8 @@ class MultiAgent():
 
     def get_loss_history(self):
         for agent in self.agents:
-            actor_loss, critic_loss = agent.get_loss()
-            self.actor_loss_history.append(actor_loss)
-            self.critic_loss_history.append(critic_loss)
+            self.actor_loss_history.append(agent.actor_loss_list)
+            self.critic_loss_history.append(agent.critic_loss_list)
             
         self.actor_loss_history = np.mean(self.actor_loss_history, axis=0)
         self.critic_loss_history = np.mean(self.critic_loss_history, axis=0)
