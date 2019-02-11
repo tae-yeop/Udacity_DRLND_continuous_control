@@ -1,6 +1,7 @@
 # cache file
 __pycache__/
 .ipynb_checkpoints/
+unity-environment.log
 
 # requirements
 python/
@@ -11,6 +12,7 @@ data/single_agent/
 
 # temp model checkpoints
 data/tmp/
+data/model
 
 # zip files
 *.zip
