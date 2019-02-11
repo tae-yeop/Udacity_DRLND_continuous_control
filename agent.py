@@ -168,7 +168,7 @@ class DDPG():
         prob = priority/sum(priority)
         prob_numpy = prob.cpu().numpy()
         # get the index of choosen experiences 
-        index = np.random.choice(len(prob_numpy),self.batch_size//2, replace=False, prob_numpy.reshape(-1))
+        index = np.random.choice(len(prob_numpy),self.batch_size//2, False, prob_numpy.reshape(-1))
 
         critic_loss = F.mse_loss(q_value[index], target=y[index])
         critic_loss.backward()
