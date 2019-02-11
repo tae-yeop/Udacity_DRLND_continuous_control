@@ -7,11 +7,12 @@ device = ("cuda:0" if torch.cuda.is_available() else "cpu")
 class ReplayBuffer():
     def __init__(self, buf_size, batch_size, seed):
         """
+        Set memory and bacth_size
         Params
         =====
-            buf_size (int): size of memory
-            batch_size (int): number of samples to be sampled
-            seed (int): random seed
+        buf_size (int): size of memory
+        batch_size (int): number of samples to be sampled
+        seed (int): random seed
         """
         # When the replay buffer was full, the oldest sample needs to be discarded.
         # So deque is suitalbe data structure. 
@@ -31,11 +32,11 @@ class ReplayBuffer():
 
         Params
         ======
-            state (numpy array) [state_size,]
-            action (numpy array) [action_size,]
-            reward (float)
-            next_state (numpy array) [state_size,]
-            done (bool) 
+        state (numpy array) [state_size,]
+        action (numpy array) [action_size,]
+        reward (float)
+        next_state (numpy array) [state_size,]
+        done (bool) 
         """
         # Instantiate new experience with custom nemaedTuple
         e = self.experience(state, action, reward, next_state, done)
@@ -45,11 +46,13 @@ class ReplayBuffer():
     def sample(self):
         """
         Draw a sample.
-        Since the sample data is used by pytorch model, It needs to be converted to a torch Tensor.
+        Since the sample data will be used by pytorch model, 
+        It needs to be converted to a torch Tensor.
         
         Returns
         =====
-            A tuple of torch tensor. Each tenosr's outermost dimension is batch_size.
+        A tuple of torch tensor :
+            Each tenosr's outermost dimension is batch_size.
             for example, states shape is [bacth_size, state_size]
             dones shape is [bact_size,]
         """

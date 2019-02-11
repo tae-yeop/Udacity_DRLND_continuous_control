@@ -6,11 +6,17 @@ import numpy as np
 
 device = ("cuda:0" if torch.cuda.is_available() else "cpu")
 
-
-
 class Actor(nn.Module):
     def __init__(self, state_size, action_size, params):
-
+        """
+        Build model and Intialize it
+        
+        Params
+        ======
+        state_size (int) : State space size
+        action_size (int) : Action space size
+        params(dict) : paramters
+        """
         super().__init__()
         
         seed = params['SEED']
@@ -28,6 +34,11 @@ class Actor(nn.Module):
         self.reset_parameters()
 
     def reset_parameters_xavier(self):
+        """
+        Initialize parameters of the layers
+        xavier_normal is used.
+        See "Understanding the difficulty of training deep feedforward neural networks" - Glorot, X. & Bengio, Y. (2010) for details.
+        """
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 I.xavier_normal_(m.weight)
@@ -41,13 +52,24 @@ class Actor(nn.Module):
         
     def reset_parameters(self):
         """
-        Initialize weights and bais in each layer
+        Use the intialization technique from Lillicrap et al.
+        See http://arxiv.org/abs/1509.02971 for details.
         """
         I.uniform_(self.fc1.weight, *self.get_fan_in(self.fc1))
         I.uniform_(self.fc2.weight, *self.get_fan_in(self.fc2))
         I.uniform_(self.fc3.weight, -3*1e-3, 3e-3)
 
     def forward(self, state):
+        """
+        Forward pass state -> action
+        
+        Parmas
+        =======
+        state (Torch Tensor) [batch_size, state_size]
+        Returns
+        ====== 
+        F.tanh(x) (Torch Tensor) [batch_size, action_size] : range of (-1,1)
+        """
         x = self.bn0(state)
         x = F.relu(self.fc1(x))
         x = self.bn1(x)
@@ -56,15 +78,26 @@ class Actor(nn.Module):
         x = self.fc3(x)
         return F.tanh(x)
 
+# During experiments, I tried to implement 4 types of critic different from each other.
+# Critic4 Class gives the best result.
 
 class Critic(nn.Module):
 
     def __init__(self, state_size, action_size, params):
+        """
+        Build model and Intialize it
+        
+        Params
+        ======
+        state_size (int) : State space size
+        action_size (int) : Action space size
+        params (dict) : parameters
+        """
         super().__init__()
 
         seed = params['SEED']
-        fc1_units = params['FC1']
-        fc2_units = params['FC2']
+        fc1_units = params['CRITIC_FC1']
+        fc2_units = params['CRITIC_FC2']
         
         torch.manual_seed(seed)
         
@@ -77,6 +110,11 @@ class Critic(nn.Module):
         self.reset_parameters()
 
     def reset_parameters_xavier(self):
+        """
+        Initialize parameters of the layers
+        xavier_normal is used.
+        See "Understanding the difficulty of training deep feedforward neural networks" - Glorot, X. & Bengio, Y. (2010) for details.
+        """
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 I.xavier_normal_(m.weight)
@@ -90,14 +128,25 @@ class Critic(nn.Module):
 
     def reset_parameters(self):
         """
-        Initialize weights and bais in each layer
+        Use the intialization technique from Lillicrap et al.
+        See http://arxiv.org/abs/1509.02971 for details.
         """
         I.uniform_(self.fc1.weight, *self.get_fan_in(self.fc1))
         I.uniform_(self.fc_merged.weight, *self.get_fan_in(self.fc_merged))
         I.uniform_(self.fc2.weight, -3*1e-3, 3e-3)   
 
     def forward(self, state, action):
-
+        """
+        Forward pass state, action -> q_value 
+        
+        Params
+        =======
+        all_states (torch tensor) [batch_size, state_size]
+        action_collections (torch tensor) [batch_size, action_size]
+        Retunrs
+        ======
+        x (torch tensor) [batch_size, 1] : Q-value
+        """
         x = self.bn0(state)
         x = F.relu(self.fc1(x))
         x = torch.cat((x, action), dim=1)
@@ -108,8 +157,12 @@ class Critic(nn.Module):
 
 class Critic2(nn.Module):
 
-    def __init__(self, state_size, action_size, seed, fc1_units=128, fc2_units=64):
+    def __init__(self, state_size, action_size, params):
         super().__init__()
+
+        seed = params['SEED']
+        fc1_units = params['CRITIC_FC1']
+        fc2_units = params['CRITIC_FC2']
 
         torch.manual_seed(seed)
         
@@ -186,23 +239,20 @@ class Critic3(nn.Module):
         self.reset_parameters()
 
     def reset_parameters_xavier(self):
+
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 I.xavier_normal_(m.weight)
 
     def reset_parameters(self):
-        """
-        Initialize weights and bais in each layer
-        """
+
         I.uniform_(self.fc1.weight, *self.get_fan_in(self.fc1))
         I.uniform_(self.fc_merged.weight, *self.get_fan_in(self.fc_merged))
         I.uniform_(self.fc2.weight, *self.get_fan_in(self.fc2))
         I.uniform_(self.fc3.weight, -3*1e-3, 3e-3)
 
     def get_fan_in(self, layer):
-        """
-        Get the fan-in in each layer.
-        """
+
         fan_in = 1/np.sqrt(layer.in_features)
         return (-fan_in, fan_in)
 
@@ -226,9 +276,7 @@ class Critic4(nn.Module):
         fc1_units = params['CRITIC_FC1']
         fc2_units = params['CRITIC_FC2']
         fc3_units = params['CRITIC_FC2']
-        torch.manual_seed(seed)
- 
-        
+        torch.manual_seed(seed)      
         
         self.fc1 = nn.Linear(state_size, fc1_units,bias=False)
         self.bn1 = nn.BatchNorm1d(fc1_units)
@@ -244,23 +292,20 @@ class Critic4(nn.Module):
         self.reset_parameters()
 
     def reset_parameters_xavier(self):
+
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 I.xavier_normal_(m.weight)
 
     def reset_parameters(self):
-        """
-        Initialize weights and bais in each layer
-        """
+        
         I.uniform_(self.fc1.weight, *self.get_fan_in(self.fc1))
         I.uniform_(self.fc_merged.weight, *self.get_fan_in(self.fc_merged))
         I.uniform_(self.fc2.weight, *self.get_fan_in(self.fc2))
         I.uniform_(self.fc3.weight, -3*1e-3, 3e-3)
 
     def get_fan_in(self, layer):
-        """
-        Get the fan-in in each layer.
-        """
+        
         fan_in = 1/np.sqrt(layer.in_features)
         return (-fan_in, fan_in)
 
