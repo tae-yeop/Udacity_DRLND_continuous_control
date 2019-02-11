@@ -262,12 +262,14 @@ class MultiAgent():
             agent.reset()
 
     def get_loss_history(self):
+        total_actor_loss_list = []
+        total_critic_loss_list = []
         for agent in self.agents:
-            self.actor_loss_history.append(agent.actor_loss_list)
-            self.critic_loss_history.append(agent.critic_loss_list)
+            total_actor_loss_list.append(agent.actor_loss_list)
+            total_critic_loss_list.append(agent.critic_loss_list)
             
-        self.actor_loss_history = np.mean(self.actor_loss_history, axis=0)
-        self.critic_loss_history = np.mean(self.critic_loss_history, axis=0)
+        self.actor_loss_history = np.mean(total_actor_loss_list, axis=0)
+        self.critic_loss_history = np.mean(total_critic_loss_list, axis=0)
 
     def save_model(self, path='model/'):
         """
